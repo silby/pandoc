@@ -65,7 +65,10 @@ bodyToDjot opts bls = do
   (bs, st) <- runStateT (blocksToDjot bls) (DjotState mempty mempty opts)
   pure $ D.Doc{ D.docBlocks = bs
               , D.docFootnotes = footnotes st
-              , D.docReferences = references st }
+              , D.docReferences = references st
+              , D.docAutoReferences = mempty -- TODO
+              , D.docAutoIdentifiers = mempty -- TODO
+              }
 
 blocksToDjot :: PandocMonad m => [Block] -> StateT DjotState m D.Blocks
 blocksToDjot = fmap mconcat . mapM blockToDjot

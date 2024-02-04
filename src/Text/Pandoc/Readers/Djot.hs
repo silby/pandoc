@@ -49,7 +49,7 @@ readDjot _opts inp = do
     Left e -> throwError $ PandocParseError $ T.pack $ show e
     Right d ->
       runReaderT (doc <$> convertBlocks (D.docBlocks d))
-        Env{ references = D.docReferences d
+        Env{ references = D.docReferences d <> D.docAutoReferences d
            , footnotes = D.docFootnotes d }
 
 data Env =
