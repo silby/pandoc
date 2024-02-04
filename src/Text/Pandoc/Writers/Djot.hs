@@ -20,18 +20,25 @@ import Text.Pandoc.Logging
 import Text.Pandoc.Class ( PandocMonad , report )
 import Text.Pandoc.Options ( WriterOptions(..), WrapOption(..))
 import Data.Text (Text)
+import Data.Set (Set)
+import qualified Data.Set as Set
+import qualified Data.ByteString as B
+import qualified Data.ByteString.Char8 as B8
 import Data.List (intersperse)
 import qualified Data.Text as T
 import qualified Data.Map as M
+import qualified Text.Pandoc.UTF8 as UTF8
 import Text.Pandoc.Writers.Shared ( metaToContext, defField, toLegacyTable )
-import Text.Pandoc.Shared (isTightList, tshow, stringify, onlySimpleTableCells)
+import Text.Pandoc.Shared (isTightList, tshow, stringify, onlySimpleTableCells,
+                           makeSections)
 import Text.DocLayout
 import Text.DocTemplates (renderTemplate)
+
 import Control.Monad.State
-import Control.Monad (zipWithM)
+import Control.Monad (zipWithM, when)
 import Data.Maybe (fromMaybe)
 import qualified Djot.AST as D
-import Djot (renderDjot, RenderOptions(..))
+import Djot (renderDjot, RenderOptions(..), toIdentifier)
 import Text.Pandoc.UTF8 (fromText)
 
 -- | Convert Pandoc to Djot.
@@ -47,7 +54,8 @@ writeDjot opts (Pandoc meta blocks) = do
                (fmap (chomp . renderDjot ropts) . bodyToDjot opts .
                   (:[]) . Plain)
                meta
-  main <- renderDjot ropts <$> bodyToDjot opts blocks
+  main <- renderDjot ropts <$>
+            bodyToDjot opts (makeSections False Nothing blocks)
   let context  = defField "body" main metadata
   return $ render colwidth $
     case writerTemplate opts of
@@ -58,16 +66,19 @@ data DjotState =
   DjotState
   { footnotes :: D.NoteMap
   , references :: D.ReferenceMap
+  , autoReferences :: D.ReferenceMap
+  , autoIds :: Set B.ByteString
   , options :: WriterOptions }
 
 bodyToDjot :: PandocMonad m => WriterOptions -> [Block] -> m D.Doc
 bodyToDjot opts bls = do
-  (bs, st) <- runStateT (blocksToDjot bls) (DjotState mempty mempty opts)
+  (bs, st) <- runStateT (blocksToDjot bls)
+               (DjotState mempty mempty mempty mempty opts)
   pure $ D.Doc{ D.docBlocks = bs
               , D.docFootnotes = footnotes st
               , D.docReferences = references st
-              , D.docAutoReferences = mempty -- TODO
-              , D.docAutoIdentifiers = mempty -- TODO
+              , D.docAutoReferences = autoReferences st -- TODO
+              , D.docAutoIdentifiers = autoIds st -- TODO
               }
 
 blocksToDjot :: PandocMonad m => [Block] -> StateT DjotState m D.Blocks
@@ -88,10 +99,22 @@ blockToDjot (BlockQuote bls) = D.blockQuote <$> blocksToDjot bls
 blockToDjot (Header lev attr ils) =
   D.addAttr (toDjotAttr attr) . D.heading lev <$> inlinesToDjot ils
 blockToDjot HorizontalRule = pure D.thematicBreak
+blockToDjot (Div (ident,"section":cls,kvs) bls@(Header _ _ ils : _)) = do
+  ilsBs <- D.inlinesToByteString <$> inlinesToDjot ils
+  let ident' = toIdentifier ilsBs
+  let label = D.normalizeLabel ilsBs
+  let autoid = UTF8.toText ident' == ident
+  when autoid $
+    modify $ \st -> st{ autoIds = Set.insert ident' (autoIds st) }
+  modify $ \st -> st{ autoReferences = D.insertReference label
+                          (B8.cons '#' ident', mempty) (autoReferences st) }
+  D.addAttr (toDjotAttr (if autoid then "" else ident,
+                         filter (/= "section") cls,
+                         filter (\(k,_) -> k /= "wrap") kvs)) . D.section
+     <$> blocksToDjot bls
 blockToDjot (Div attr@(ident,cls,kvs) bls)
   | Just "1" <- lookup "wrap" kvs
-    = D.addAttr (toDjotAttr (ident,filter (/= "section") cls,
-                             filter (\(k,_) -> k /= "wrap") kvs))
+    = D.addAttr (toDjotAttr (ident,cls,filter (\(k,_) -> k /= "wrap") kvs))
        <$> blocksToDjot bls
   | otherwise
     = D.addAttr (toDjotAttr attr) . D.div <$> blocksToDjot bls

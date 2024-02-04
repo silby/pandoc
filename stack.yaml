@@ -33,7 +33,7 @@ extra-deps:
   subdirs: [commonmark-pandoc]
   commit: d681657a8b1ff9c7d0120356fbce079d325eada4
 - git: https://github.com/jgm/djoths
-  commit: 97faae4bef87e3c0698dbbe4ff70f75ddd15b663
+  commit: 4c151bf0a690bd75bd5e17d19169029c8e41b121
 
 ghc-options:
    "$locals": -fhide-source-paths -Wno-missing-home-modules
