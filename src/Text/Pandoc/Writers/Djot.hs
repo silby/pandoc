@@ -74,11 +74,13 @@ bodyToDjot :: PandocMonad m => WriterOptions -> [Block] -> m D.Doc
 bodyToDjot opts bls = do
   (bs, st) <- runStateT (blocksToDjot bls)
                (DjotState mempty mempty mempty mempty opts)
+  let D.ReferenceMap autos = autoReferences st
+  let D.ReferenceMap refs = references st
   pure $ D.Doc{ D.docBlocks = bs
               , D.docFootnotes = footnotes st
-              , D.docReferences = references st
-              , D.docAutoReferences = autoReferences st -- TODO
-              , D.docAutoIdentifiers = autoIds st -- TODO
+              , D.docReferences = D.ReferenceMap $ M.difference refs autos
+              , D.docAutoReferences = D.ReferenceMap autos
+              , D.docAutoIdentifiers = autoIds st
               }
 
 blocksToDjot :: PandocMonad m => [Block] -> StateT DjotState m D.Blocks
@@ -246,11 +248,17 @@ inlineToDjot (Link attr ils (src,tit)) = do
       | email -> pure $ D.addAttr attr' $ D.emailLink (fromText ilstring)
       | writerReferenceLinks opts
         -> do refs@(D.ReferenceMap m) <- gets references
-              let refnum = M.size m + 1
-              let lab = fromText $ tshow refnum
-              modify $ \st -> st{ references =
-                                    D.insertReference lab
-                                      (fromText src, attr') refs }
+              autoRefs <- gets autoReferences
+              let lab' = D.inlinesToByteString description
+              lab <- case D.lookupReference lab' (refs <> autoRefs) of
+                       Just _ -> pure lab'
+                       Nothing -> do
+                         let refnum = M.size m + 1
+                         let lab = fromText $ tshow refnum
+                         modify $ \st -> st{ references =
+                                               D.insertReference lab
+                                                 (fromText src, attr') refs }
+                         pure lab
               pure $ D.addAttr attr' $ D.link description (D.Reference lab)
       | otherwise
          -> pure $ D.addAttr attr' $ D.link description (D.Direct (fromText src))
